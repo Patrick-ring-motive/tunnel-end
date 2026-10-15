@@ -1,0 +1,95 @@
+name: Python server with Cloudflare Quick Tunnel
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  quick-tunnel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install cloudflared
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.10.1/cloudflared-linux-amd64 \
+            --output "$RUNNER_TEMP/cloudflared"
+          echo "3bfc539f45d2620c71debb7a86be0efa737ed5ccbad9eb85c787116900e5c586  $RUNNER_TEMP/cloudflared" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/cloudflared"
+
+      - name: Serve demo and open Quick Tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Serve only a generated demo, never the checkout or runner files.
+          site_dir="$(mktemp -d "$RUNNER_TEMP/quick-tunnel-site.XXXXXX")"
+          printf '%s\n' '<!doctype html><html lang="en"><meta charset="utf-8"><title>Quick Tunnel</title><h1>Python server is online</h1><p>Served from GitHub Actions through a Cloudflare Quick Tunnel.</p></html>' > "$site_dir/index.html"
+          server_pid=""
+          tunnel_pid=""
+          cleanup() {
+            [[ -z "$tunnel_pid" ]] || kill "$tunnel_pid" 2>/dev/null || true
+            [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
+            wait || true
+            rm -rf "$site_dir"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
+          python -u -m http.server 8000 --bind 127.0.0.1 --directory "$site_dir" \
+            > "$RUNNER_TEMP/python-server.log" 2>&1 &
+          server_pid=$!
+          curl --fail --silent --show-error --retry 15 --retry-connrefused \
+            --retry-delay 1 --max-time 2 http://127.0.0.1:8000/ > /dev/null
+
+          "$RUNNER_TEMP/cloudflared" tunnel --no-autoupdate --url http://127.0.0.1:8000 \
+            > "$RUNNER_TEMP/cloudflared.log" 2>&1 &
+          tunnel_pid=$!
+
+          tunnel_url=""
+          for ((attempt = 0; attempt < 60; attempt++)); do
+            kill -0 "$tunnel_pid" 2>/dev/null || { cat "$RUNNER_TEMP/cloudflared.log"; exit 1; }
+            tunnel_url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$RUNNER_TEMP/cloudflared.log" | head -n 1 || true)"
+            [[ -z "$tunnel_url" ]] || break
+            sleep 1
+          done
+          if [[ -z "$tunnel_url" ]]; then
+            cat "$RUNNER_TEMP/cloudflared.log"
+            echo "::error::Cloudflare did not issue a Quick Tunnel URL."
+            exit 1
+          fi
+
+          # DNS and edge routing may need time after the URL is issued.
+          curl --fail --silent --show-error --retry 12 --retry-all-errors \
+            --retry-delay 3 --max-time 10 "$tunnel_url" > /dev/null
+          echo "::notice::Public demo: $tunnel_url (stops after 15 idle minutes)"
+          {
+            echo "### Cloudflare Quick Tunnel"
+            echo "- Public URL: $tunnel_url"
+            echo "- Stops after 15 minutes without requests; job has a 70-minute hard limit."
+            echo "- No authentication. Demo content only. URL expires when this job stops."
+            echo "- Restart the workflow to create a new URL; requests cannot wake a stopped job."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Python's unbuffered access log changes whenever it logs a request.
+          # Do not poll the HTTP server here: that would reset the idle timer.
+          while true; do
+            kill -0 "$server_pid" 2>/dev/null || { cat "$RUNNER_TEMP/python-server.log"; exit 1; }
+            kill -0 "$tunnel_pid" 2>/dev/null || { cat "$RUNNER_TEMP/cloudflared.log"; exit 1; }
+            last_request=$(stat -c %Y "$RUNNER_TEMP/python-server.log")
+            if (( $(date +%s) - last_request >= 900 )); then
+              echo "No requests for 15 minutes; stopping server and tunnel."
+              echo "- Stopped after 15 minutes of inactivity." >> "$GITHUB_STEP_SUMMARY"
+              break
+            fi
+            sleep 5
+          done
