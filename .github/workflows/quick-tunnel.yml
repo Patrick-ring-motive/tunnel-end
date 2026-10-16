@@ -5,6 +5,11 @@ on:
 
 permissions: {}
 
+# Concurrent init requests must not run multiple tunnel servers at once.
+concurrency:
+  group: quick-tunnel
+  cancel-in-progress: false
+
 jobs:
   quick-tunnel:
     runs-on: ubuntu-24.04
