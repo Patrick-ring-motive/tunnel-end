@@ -47,9 +47,11 @@ jobs:
           printf '%s\n' '<!doctype html><html lang="en"><meta charset="utf-8"><title>Quick Tunnel</title><h1>Python server is online</h1><p>Served from GitHub Actions through a Cloudflare Quick Tunnel.</p></html>' > "$site_dir/index.html"
           server_pid=""
           tunnel_pid=""
+          log_pid=""
           cleanup() {
             [[ -z "$tunnel_pid" ]] || kill "$tunnel_pid" 2>/dev/null || true
             [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
+            [[ -z "$log_pid" ]] || kill "$log_pid" 2>/dev/null || true
             wait || true
             rm -rf "$site_dir"
           }
@@ -57,9 +59,14 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
 
+          : > "$RUNNER_TEMP/python-server.log"
           python -u -m http.server 8000 --bind 127.0.0.1 --directory "$site_dir" \
             > "$RUNNER_TEMP/python-server.log" 2>&1 &
           server_pid=$!
+          # Show request timestamps, methods, paths and status codes in Actions.
+          # Keep the file for idle detection; reading it does not reset its mtime.
+          tail -n +1 -F "$RUNNER_TEMP/python-server.log" &
+          log_pid=$!
           curl --fail --silent --show-error --retry 15 --retry-connrefused \
             --retry-delay 1 --max-time 2 http://127.0.0.1:8000/ > /dev/null
 
