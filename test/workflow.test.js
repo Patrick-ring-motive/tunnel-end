@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  rmSync
+} from "node:fs";
+import {
+  tmpdir
+} from "node:os";
+import {
+  join
+} from "node:path";
+import {
+  spawnSync
+} from "node:child_process";
 import test from "node:test";
 
 const workflow = readFileSync(new URL("../.github/workflows/quick-tunnel.yml", import.meta.url), "utf8");
@@ -17,7 +28,10 @@ const registration = serve.slice(serve.indexOf("# Persist directly"), serve.inde
 test("workflow run blocks pass bash -n and retain secret binding without checkout", () => {
   assert.equal(blocks.length, 2);
   for (const block of blocks) {
-    const result = spawnSync("bash", ["-n"], { input: block, encoding: "utf8" });
+    const result = spawnSync("bash", ["-n"], {
+      input: block,
+      encoding: "utf8"
+    });
     assert.equal(result.status, 0, result.stderr);
   }
   assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.TUNNEL_VARIABLE_TOKEN \}\}/);
@@ -40,7 +54,9 @@ if (response === undefined) process.exit(99);
 if (response === 'network') { process.stderr.write('PRIVATE RAW ERROR'); process.exit(28); }
 if (args.includes('--write-out')) process.stdout.write(String(response));
 else if (response >= 400) process.exit(22);
-`, { mode: 0o700 });
+`, {
+      mode: 0o700
+    });
     writeFileSync(join(dir, "calls.json"), "[]");
     const before = Date.now();
     const result = spawnSync("bash", ["-s"], {
@@ -59,19 +75,38 @@ else if (response >= 400) process.exit(22);
     });
     assert.ifError(result.error);
     assert.doesNotMatch(result.stdout + result.stderr, /test-only-token|test-registration-token|PRIVATE RAW ERROR/);
-    return { result, calls: JSON.parse(readFileSync(join(dir, "calls.json"), "utf8")), before, after: Date.now() };
+    return {
+      result,
+      calls: JSON.parse(readFileSync(join(dir, "calls.json"), "utf8")),
+      before,
+      after: Date.now()
+    };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, {
+      recursive: true,
+      force: true
+    });
   }
 }
 
 for (const [name, statuses, methods] of [
-  ["existing", [204, 200], ["PATCH"]],
-  ["create", [404, 201, 200], ["PATCH", "POST"]],
-  ["create race", [404, 422, 204, 200], ["PATCH", "POST", "PATCH"]],
-]) {
+    ["existing", [204, 200],
+      ["PATCH"]
+    ],
+    ["create", [404, 201, 200],
+      ["PATCH", "POST"]
+    ],
+    ["create race", [404, 422, 204, 200],
+      ["PATCH", "POST", "PATCH"]
+    ],
+  ]) {
   test(`direct persistence before registration: ${name}`, () => {
-    const { result, calls, before, after } = run(statuses);
+    const {
+      result,
+      calls,
+      before,
+      after
+    } = run(statuses);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(calls.length, methods.length + 1);
     for (const [index, method] of methods.entries()) {
@@ -96,17 +131,32 @@ for (const [name, statuses, methods] of [
     const args = calls.at(-1);
     assert.ok(args.includes("https://worker.invalid/__tunnel"));
     assert.ok(args.includes("--fail-with-body"));
-    assert.deepEqual(JSON.parse(args[args.indexOf("--data") + 1]), { host: "test-tunnel.trycloudflare.com" });
+    assert.deepEqual(JSON.parse(args[args.indexOf("--data") + 1]), {
+      host: "test-tunnel.trycloudflare.com"
+    });
   });
 }
 
 for (const statuses of [
-  [401], [403], [422], [429], [500], [302], ["network"],
-  [404, 403], [404, 500], [404, "network"],
-  [404, 422, 403], [404, 422, 404], [404, 422, "network"],
-]) {
+    [401],
+    [403],
+    [422],
+    [429],
+    [500],
+    [302],
+    ["network"],
+    [404, 403],
+    [404, 500],
+    [404, "network"],
+    [404, 422, 403],
+    [404, 422, 404],
+    [404, 422, "network"],
+  ]) {
   test(`failure stops before registration: ${statuses.join("/")}`, () => {
-    const { result, calls } = run(statuses);
+    const {
+      result,
+      calls
+    } = run(statuses);
     assert.notEqual(result.status, 0);
     assert.equal(calls.length, statuses.length);
     assert.ok(calls.every((args) => !args.includes("https://worker.invalid/__tunnel")));
@@ -114,14 +164,20 @@ for (const statuses of [
 }
 
 test("missing PAT fails early without any requests", () => {
-  const { result, calls } = run([], "");
+  const {
+    result,
+    calls
+  } = run([], "");
   assert.notEqual(result.status, 0);
   assert.equal(calls.length, 0);
   assert.match(result.stdout, /TUNNEL_VARIABLE_TOKEN/);
 });
 
 test("Worker registration failure remains fatal after direct persistence", () => {
-  const { result, calls } = run([204, 503]);
+  const {
+    result,
+    calls
+  } = run([204, 503]);
   assert.notEqual(result.status, 0);
   assert.equal(calls.length, 2);
   assert.ok(calls[1].includes("https://worker.invalid/__tunnel"));
