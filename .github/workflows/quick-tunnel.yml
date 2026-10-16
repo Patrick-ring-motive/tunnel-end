@@ -33,10 +33,15 @@ jobs:
       - name: Serve demo and open Quick Tunnel
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.TUNNEL_VARIABLE_TOKEN }}
           REGISTRATION_TOKEN: ${{ secrets.REGISTRATION_TOKEN }}
           PROXY_URL: https://quick-tunnel-proxy.open-webui-cloudflare.workers.dev
         run: |
           set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Set TUNNEL_VARIABLE_TOKEN to a PAT with repository Variables read/write permission."
+            exit 1
+          fi
           if [[ -z "$REGISTRATION_TOKEN" ]]; then
             echo "::error::Set the REGISTRATION_TOKEN repository secret to match the Worker secret."
             exit 1
@@ -87,8 +92,40 @@ jobs:
             exit 1
           fi
 
-          # Register the hostname as soon as Cloudflare issues the URL.
+          # Persist directly before Worker registration warms its local caches.
           tunnel_host="${tunnel_url#https://}"
+          expires_at="$(( ($(date +%s) + 70 * 60) * 1000 ))"
+          variable_body="$(jq -nc --arg host "$tunnel_host" --argjson expiresAt "$expires_at" \
+            '{name: "TUNNEL_HOST", value: ({host: $host, expiresAt: $expiresAt} | tojson)}')"
+          variable_base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/variables"
+          variable_request() {
+            local method="$1" url="$2"
+            # Discard response bodies and diagnostics; never follow redirects.
+            if ! variable_status="$(curl --silent --connect-timeout 10 --max-time 30 \
+              --output /dev/null --write-out '%{http_code}' \
+              --request "$method" "$url" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              --header 'Content-Type: application/json' \
+              --data "$variable_body" 2>/dev/null)"; then
+              echo "::error::GitHub tunnel variable request failed."
+              exit 1
+            fi
+          }
+          variable_request PATCH "$variable_base/TUNNEL_HOST"
+          if [[ "$variable_status" == 404 ]]; then
+            variable_request POST "$variable_base"
+            if [[ "$variable_status" == 422 ]]; then
+              variable_request PATCH "$variable_base/TUNNEL_HOST"
+            fi
+          fi
+          if [[ ! "$variable_status" =~ ^2[0-9][0-9]$ ]]; then
+            echo "::error::GitHub tunnel variable write failed."
+            exit 1
+          fi
+
+          # Keep Worker persistence and fail-closed registration unchanged.
           registration_body="$(jq -nc --arg host "$tunnel_host" '{host: $host}')"
           curl --fail-with-body --silent --show-error --retry 3 \
             --retry-delay 2 --connect-timeout 10 --max-time 30 \
