@@ -27,8 +27,15 @@ jobs:
 
       - name: Serve demo and open Quick Tunnel
         shell: bash
+        env:
+          REGISTRATION_TOKEN: ${{ secrets.REGISTRATION_TOKEN }}
+          PROXY_URL: https://quick-tunnel-proxy.open-webui-cloudflare.workers.dev
         run: |
           set -euo pipefail
+          if [[ -z "$REGISTRATION_TOKEN" ]]; then
+            echo "::error::Set the REGISTRATION_TOKEN repository secret to match the Worker secret."
+            exit 1
+          fi
 
           # Serve only a generated demo, never the checkout or runner files.
           site_dir="$(mktemp -d "$RUNNER_TEMP/quick-tunnel-site.XXXXXX")"
@@ -67,6 +74,18 @@ jobs:
             echo "::error::Cloudflare did not issue a Quick Tunnel URL."
             exit 1
           fi
+
+          # Register the hostname as soon as Cloudflare issues the URL.
+          tunnel_host="${tunnel_url#https://}"
+          registration_body="$(jq -nc --arg host "$tunnel_host" '{host: $host}')"
+          curl --fail-with-body --silent --show-error --retry 3 \
+            --retry-delay 2 --connect-timeout 10 --max-time 30 \
+            --request POST "$PROXY_URL/__tunnel" \
+            --header "Authorization: Bearer $REGISTRATION_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$registration_body"
+          echo
+          echo "::notice::Registered $tunnel_host with $PROXY_URL"
 
           # DNS and edge routing may need time after the URL is issued.
           curl --fail --silent --show-error --retry 12 --retry-all-errors \
