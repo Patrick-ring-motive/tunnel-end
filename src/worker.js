@@ -1,4 +1,7 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  timingSafeEqual
+} from "node:crypto";
 
 const REGISTER_PATH = "/__tunnel";
 const CACHE_NAME = "tunnel-registration-v2";
@@ -16,7 +19,10 @@ let revision = 0;
 function json(body, status = 200, headers = {}) {
   return Response.json(body, {
     status,
-    headers: { "Cache-Control": "no-store", ...headers },
+    headers: {
+      "Cache-Control": "no-store",
+      ...headers
+    },
   });
 }
 
@@ -36,7 +42,10 @@ async function readRegistration(request) {
   let length = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const {
+        done,
+        value
+      } = await reader.read();
       if (done) break;
       if (length + value.byteLength > bytes.length) {
         await reader.cancel();
@@ -74,7 +83,9 @@ class RegistrationError extends Error {
 function registrationError(error) {
   return json({
     error: error instanceof RegistrationError ? error.message : "Could not access tunnel registration",
-    ...(error.upstreamStatus ? { upstreamStatus: error.upstreamStatus } : {}),
+    ...(error.upstreamStatus ? {
+      upstreamStatus: error.upstreamStatus
+    } : {}),
   }, error instanceof RegistrationError ? error.status : 502);
 }
 
@@ -85,8 +96,15 @@ async function variableRequest(env, method, body) {
   const base = `https://api.github.com/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/actions/variables`;
   return fetch(method === "POST" ? base : `${base}/${REPO_VARIABLE}`, {
     method,
-    headers: { ...githubHeaders(env), ...(body ? { "Content-Type": "application/json" } : {}) },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    headers: {
+      ...githubHeaders(env),
+      ...(body ? {
+        "Content-Type": "application/json"
+      } : {})
+    },
+    ...(body ? {
+      body: JSON.stringify(body)
+    } : {}),
     redirect: "manual",
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
@@ -94,8 +112,8 @@ async function variableRequest(env, method, body) {
 }
 
 function validRecord(record) {
-  return record && typeof record.host === "string" && HOST_PATTERN.test(record.host)
-    && Number.isFinite(record.expiresAt);
+  return record && typeof record.host === "string" && HOST_PATTERN.test(record.host) &&
+    Number.isFinite(record.expiresAt);
 }
 
 async function readRepository(env) {
@@ -115,7 +133,10 @@ async function readRepository(env) {
 }
 
 async function writeRepository(env, record) {
-  const body = { name: REPO_VARIABLE, value: JSON.stringify(record) };
+  const body = {
+    name: REPO_VARIABLE,
+    value: JSON.stringify(record)
+  };
   let response = await variableRequest(env, "PATCH", body);
   if (response.status === 404) {
     await response.body?.cancel();
@@ -136,7 +157,9 @@ async function cacheRecord(key, record) {
   try {
     const cache = await caches.open(CACHE_NAME);
     await cache.put(key, Response.json(record, {
-      headers: { "Cache-Control": `public, max-age=${seconds}` },
+      headers: {
+        "Cache-Control": `public, max-age=${seconds}`
+      },
     }));
   } catch {
     // Cache is an optimization; GitHub remains the source of truth.
@@ -198,7 +221,11 @@ async function tunnelReachable(tunnel) {
 async function tunnelStatus(request, env, key, allowDispatch) {
   const methods = allowDispatch ? ["POST"] : ["GET", "POST"];
   if (!methods.includes(request.method)) {
-    return json({ error: `Use ${methods.join(" or ")} for this endpoint` }, 405, { Allow: methods.join(", ") });
+    return json({
+      error: `Use ${methods.join(" or ")} for this endpoint`
+    }, 405, {
+      Allow: methods.join(", ")
+    });
   }
   // Startup and monitoring are public. Only /__tunnel requires authentication.
   let tunnel;
@@ -207,10 +234,14 @@ async function tunnelStatus(request, env, key, allowDispatch) {
   } catch (error) {
     return registrationError(error);
   }
-  if (await tunnelReachable(tunnel)) return json({ status: "ready" });
+  if (await tunnelReachable(tunnel)) return json({
+    status: "ready"
+  });
 
   if (!env.GITHUB_TOKEN || !env.GITHUB_OWNER || !env.GITHUB_REPO || !env.GITHUB_REF) {
-    return json({ error: "Configure GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO and GITHUB_REF" }, 503);
+    return json({
+      error: "Configure GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO and GITHUB_REF"
+    }, 503);
   }
   const workflow = env.GITHUB_WORKFLOW || "quick-tunnel.yml";
   const base = `https://api.github.com/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/actions/workflows/${encodeURIComponent(workflow)}`;
@@ -227,33 +258,54 @@ async function tunnelStatus(request, env, key, allowDispatch) {
       });
       if (!response.ok) {
         await response.body?.cancel();
-        return json({ error: "GitHub workflow lookup failed", upstreamStatus: response.status }, 502);
+        return json({
+          error: "GitHub workflow lookup failed",
+          upstreamStatus: response.status
+        }, 502);
       }
       const data = await response.json();
       if (!Array.isArray(data.workflow_runs) || !Number.isInteger(data.total_count)) {
-        return json({ error: "Invalid GitHub workflow response" }, 502);
+        return json({
+          error: "Invalid GitHub workflow response"
+        }, 502);
       }
-      if (data.total_count > 0) return json({ status: "loading" });
+      if (data.total_count > 0) return json({
+        status: "loading"
+      });
     }
 
-    if (!allowDispatch) return json({ status: "idle" });
+    if (!allowDispatch) return json({
+      status: "idle"
+    });
 
     // GitHub lookup + dispatch is not atomic across requests or data centers.
     // Workflow concurrency prevents simultaneous tunnel jobs, not duplicate dispatches.
     const response = await fetch(`${base}/dispatches`, {
       method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: env.GITHUB_REF }),
+      headers: {
+        ...headers,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ref: env.GITHUB_REF
+      }),
       redirect: "manual",
       signal: AbortSignal.timeout(10_000),
     });
     await response.body?.cancel();
     if (!response.ok) {
-      return json({ error: "GitHub workflow dispatch failed", upstreamStatus: response.status }, 502);
+      return json({
+        error: "GitHub workflow dispatch failed",
+        upstreamStatus: response.status
+      }, 502);
     }
-    return json({ status: "start" });
+    return json({
+      status: "start"
+    });
   } catch {
-    return json({ error: "GitHub API unavailable or returned invalid data" }, 502);
+    return json({
+      error: "GitHub API unavailable or returned invalid data"
+    }, 502);
   }
 }
 
@@ -369,30 +421,51 @@ export default {
 
     if (url.pathname === REGISTER_PATH) {
       if (request.method !== "POST") {
-        return json({ error: "Use POST to register a tunnel" }, 405, { Allow: "POST" });
+        return json({
+          error: "Use POST to register a tunnel"
+        }, 405, {
+          Allow: "POST"
+        });
       }
       if (!env.REGISTRATION_TOKEN) {
-        return json({ error: "Registration secret is not configured" }, 503);
+        return json({
+          error: "Registration secret is not configured"
+        }, 503);
       }
       if (!authorized(request, env.REGISTRATION_TOKEN)) {
-        return json({ error: "Unauthorized" }, 401);
+        return json({
+          error: "Unauthorized"
+        }, 401);
       }
       let host;
       try {
         host = await readRegistration(request);
       } catch {
-        return json({ error: "Expected JSON {host: '<name>.trycloudflare.com'} (maximum 1024 bytes)" }, 400);
+        return json({
+          error: "Expected JSON {host: '<name>.trycloudflare.com'} (maximum 1024 bytes)"
+        }, 400);
       }
-      const record = { host, expiresAt: Date.now() + CACHE_SECONDS * 1000 };
+      const record = {
+        host,
+        expiresAt: Date.now() + CACHE_SECONDS * 1000
+      };
       try {
         await writeRepository(env, record);
       } catch (error) {
         return registrationError(error);
       }
       revision++;
-      cachedTunnel = { key, record, refreshAt: Date.now() + MEMORY_MS };
+      cachedTunnel = {
+        key,
+        record,
+        refreshAt: Date.now() + MEMORY_MS
+      };
       await cacheRecord(key, record);
-      return json({ ...record, scope: "repository", variable: REPO_VARIABLE });
+      return json({
+        ...record,
+        scope: "repository",
+        variable: REPO_VARIABLE
+      });
     }
 
     let tunnel;
@@ -420,7 +493,10 @@ export default {
       const upstream = new Request(url, request);
       upstream.headers.delete("Host");
       // Never follow upstream redirects with the caller's cookies/credentials.
-      const response = await fetch(upstream, { redirect: "manual", cache: "no-store" });
+      const response = await fetch(upstream, {
+        redirect: "manual",
+        cache: "no-store"
+      });
       // Preserve WebSocket upgrade objects; ordinary HTTP responses remain streamed.
       if (response.status === 101) return response;
       const outgoing = new Response(response.body, response);
@@ -429,7 +505,9 @@ export default {
       outgoing.headers.set("Cloudflare-CDN-Cache-Control", "no-store");
       return outgoing;
     } catch {
-      return json({ error: "Tunnel is unavailable" }, 502);
+      return json({
+        error: "Tunnel is unavailable"
+      }, 502);
     }
   },
 };
