@@ -3,7 +3,8 @@ name: Python server with Cloudflare Quick Tunnel
 on:
   workflow_dispatch: {}
 
-permissions: {}
+permissions:
+  contents: read
 
 # Concurrent init requests must not run multiple tunnel servers at once.
 concurrency:
@@ -15,6 +16,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
+      - name: Check out server source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -64,8 +70,9 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
 
+          # Keep executable source outside the public demo directory.
           : > "$RUNNER_TEMP/python-server.log"
-          python -u -m http.server 8000 --bind 127.0.0.1 --directory "$site_dir" \
+          python -u "$GITHUB_WORKSPACE/server/tunnel_server.py" "$site_dir" \
             > "$RUNNER_TEMP/python-server.log" 2>&1 &
           server_pid=$!
           # Show request timestamps, methods, paths and status codes in Actions.
